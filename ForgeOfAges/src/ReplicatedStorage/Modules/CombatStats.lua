@@ -46,8 +46,8 @@ function CombatStats.addFlatBonuses(stats, bonuses)
 	end
 end
 
--- Not meant to model "real" combat - it's a weighted scalar so dungeons and
--- the arena can resolve instantly as a stat-check simulation.
+-- Not meant to model "real" combat - it's a weighted scalar so the arena can
+-- resolve a bot fight instantly as a stat-check simulation.
 function CombatStats.computePower(stats): number
 	local critMultiplier = 1 + (stats.CritRate / 100) * (stats.CritDamage / 100)
 	local speedMultiplier = 1 + (stats.AttackSpeed / 100)
@@ -56,6 +56,29 @@ function CombatStats.computePower(stats): number
 	local uniqueEffectBonus = 1 + ((stats.Burn + stats.Poison + stats.Stun) / 100) * 0.5
 
 	return (effectiveDamage + effectiveHealth * 0.15) * uniqueEffectBonus
+end
+
+-- Flat floors so a fresh, ungeared player still has nonzero DPS/HP - stage
+-- combat is a DPS race (see StageSystem), never a hard RNG wall, but a zero
+-- floor would still make the very first wave take forever to even scratch.
+local BASE_DPS = 4
+local BASE_HP = 80
+
+-- Concrete numbers for the real-time stage combat tick loop, as opposed to
+-- computePower's single abstract scalar. techBonusPercent is a table of
+-- {damagePercent, maxHPPercent} from TechTreeSystem.getBonus.
+function CombatStats.computeCombatant(stats, techBonusPercent)
+	techBonusPercent = techBonusPercent or {}
+	local critMultiplier = 1 + (stats.CritRate / 100) * (stats.CritDamage / 100)
+	local speedMultiplier = 1 + (stats.AttackSpeed / 100)
+	local rawDamage = stats.Damage + stats.RangedDamage + stats.MeleeDamage
+	local dps = (BASE_DPS + rawDamage) * critMultiplier * speedMultiplier * (1 + (techBonusPercent.damagePercent or 0) / 100)
+
+	local maxHP = (BASE_HP + stats.HP) * (1 + (techBonusPercent.maxHPPercent or 0) / 100)
+	-- HealthRegen is "% of max HP restored per ~50 seconds" - a slow idle trickle, not a combat sustain stat.
+	local regenPerSecond = maxHP * (stats.HealthRegen / 100) * 0.02
+
+	return { dps = dps, maxHP = maxHP, regenPerSecond = regenPerSecond }
 end
 
 return CombatStats

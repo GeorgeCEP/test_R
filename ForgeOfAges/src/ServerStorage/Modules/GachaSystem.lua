@@ -62,7 +62,7 @@ function GachaSystem.roll(player: Player, data, poolType: string)
 	local ownedList = if poolType == "Pet" then data.pets else data.skills
 
 	local rarityId = rollRarity()
-	local entry = pickPool(pool, data.age, rarityId)
+	local entry = pickPool(pool, EconomySystem.getAgeId(data), rarityId)
 	if not entry then
 		return nil
 	end

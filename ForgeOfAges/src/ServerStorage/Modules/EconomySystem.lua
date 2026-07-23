@@ -1,42 +1,43 @@
 -- ServerStorage/Modules/EconomySystem.lua
+-- Ore's only passive source now is the base per-age trickle plus tech tree
+-- levels (buildings are gone) - everything else (stage clears, the Forge)
+-- is a discrete grant/spend handled by the systems that own those actions.
+-- This module still owns the shared pushState broadcast every other system
+-- calls after it mutates player data.
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 local AgeDefinitions = require(ReplicatedStorage.Modules.AgeDefinitions)
+local StageDefinitions = require(ReplicatedStorage.Modules.StageDefinitions)
 local NetworkEvents = require(ReplicatedStorage.Modules.NetworkEvents)
 local DataManager = require(script.Parent.DataManager)
 local PowerCalculator = require(script.Parent.PowerCalculator)
+local TechTreeSystem = require(script.Parent.TechTreeSystem)
 
 local EconomySystem = {}
 
 local IDLE_TICK_SECONDS = 1
 local AUTOSAVE_SECONDS = 60
-local TECH_POINT_MULTIPLIER_STEP = 0.02 -- +2% global Ore output per Tech Point
+local PRESTIGE_MULTIPLIER_STEP = 0.02 -- +2% global Ore output per Prestige Point
 local ARENA_DAILY_ATTEMPTS = 3
+local BASE_PASSIVE_ORE = 0.2 -- flat, before age scale/tech bonuses/prestige multiplier
 
 local stateUpdated = NetworkEvents.get("StateUpdated")
 
-function EconomySystem.getGlobalMultiplier(data): number
-	return 1 + (data.techPoints * TECH_POINT_MULTIPLIER_STEP)
+function EconomySystem.getAgeId(data): number
+	return StageDefinitions.getAgeIdForChapter(data.stageProgress.chapter)
 end
 
-function EconomySystem.getTapPower(data): number
-	local age = AgeDefinitions.get(data.age)
-	return age.tapBase * EconomySystem.getGlobalMultiplier(data)
+function EconomySystem.getGlobalOreMultiplier(data): number
+	return 1 + (data.prestigePoints * PRESTIGE_MULTIPLIER_STEP)
 end
 
 function EconomySystem.getIdleOutputPerSecond(data): number
-	local age = AgeDefinitions.get(data.age)
-	local total = 0
-	for _, building in age.buildings do
-		local count = data.buildings[building.id] or 0
-		total += count * building.baseOutput
-	end
-	return total * EconomySystem.getGlobalMultiplier(data)
-end
-
-function EconomySystem.getBuildingCost(building, ownedCount): number
-	return building.baseCost * (building.costGrowth ^ ownedCount)
+	local ageId = EconomySystem.getAgeId(data)
+	local base = BASE_PASSIVE_ORE * AgeDefinitions.getScale(ageId)
+	local techMultiplier = 1 + TechTreeSystem.getBonus(data, "passiveOrePercent") / 100
+	return base * techMultiplier * EconomySystem.getGlobalOreMultiplier(data)
 end
 
 function EconomySystem.addOre(data, amount: number)
@@ -45,41 +46,50 @@ function EconomySystem.addOre(data, amount: number)
 end
 
 function EconomySystem.pushState(player: Player, data)
-	local age = AgeDefinitions.get(data.age)
-	local maxAge = AgeDefinitions.getMaxAgeUnlocked(data.prestigeCount)
-
-	local buildingInfo = {}
-	for _, building in age.buildings do
-		local owned = data.buildings[building.id] or 0
-		table.insert(buildingInfo, {
-			id = building.id,
-			name = building.name,
-			owned = owned,
-			cost = EconomySystem.getBuildingCost(building, owned),
-			output = building.baseOutput * EconomySystem.getGlobalMultiplier(data),
-		})
-	end
+	local ageId = EconomySystem.getAgeId(data)
+	local age = AgeDefinitions.get(ageId)
+	local maxChapter = StageDefinitions.getMaxChapterUnlocked(data.prestigeCount)
 
 	local today = math.floor(os.time() / 86400)
 	local arenaAttemptsLeft = if data.arena.lastResetDay == today
 		then math.max(0, ARENA_DAILY_ATTEMPTS - data.arena.rollsToday)
 		else ARENA_DAILY_ATTEMPTS
 
+	local combatant = PowerCalculator.getCombatant(data)
+
+	local techTreeLevels = {}
+	for nodeId, level in data.techTree do
+		techTreeLevels[nodeId] = level
+	end
+
+	local forgeJobs = {}
+	for index, job in data.forgeJobs do
+		table.insert(forgeJobs, {
+			slot = index,
+			secondsLeft = math.max(0, job.finishAt - os.time()),
+		})
+	end
+
 	stateUpdated:FireClient(player, {
 		ore = data.ore,
-		ageId = data.age,
+		ageId = ageId,
 		ageName = age.name,
 		resourceLabel = age.resourceLabel,
-		tapPower = EconomySystem.getTapPower(data),
 		idlePerSecond = EconomySystem.getIdleOutputPerSecond(data),
-		buildings = buildingInfo,
-		techPoints = data.techPoints,
+
+		stageChapter = data.stageProgress.chapter,
+		stageStage = data.stageProgress.stage,
+		stageCycle = data.stageProgress.cycle,
+		stageLabel = StageDefinitions.getLabel(data.stageProgress.chapter, data.stageProgress.stage),
+		atPrestigeCap = data.stageProgress.chapter >= maxChapter,
+
+		prestigePoints = data.prestigePoints,
 		prestigeCount = data.prestigeCount,
-		ageUpCost = age.ageUpCost,
-		atPrestigeCap = data.age >= maxAge,
 
 		gachaCurrency = data.gachaCurrency,
 		power = PowerCalculator.getPower(data),
+		combatDps = combatant.dps,
+		combatMaxHP = combatant.maxHP,
 		gear = data.gear,
 		equippedGear = data.equippedGear,
 		pets = data.pets,
@@ -87,32 +97,17 @@ function EconomySystem.pushState(player: Player, data)
 		skills = data.skills,
 		equippedSkillIds = data.equippedSkillIds,
 
-		dungeonCooldownRemaining = math.max(0, data.dungeonCooldownEnd - os.time()),
+		researchPoints = data.researchPoints,
+		techTree = techTreeLevels,
+		forgeSlotCount = TechTreeSystem.getForgeSlotCount(data),
+		forgeJobs = forgeJobs,
+
 		arenaAttemptsLeft = arenaAttemptsLeft,
 	})
 end
 
-function EconomySystem.buyBuilding(player: Player, data, buildingId: string): boolean
-	local age = AgeDefinitions.get(data.age)
-	local building = AgeDefinitions.getBuilding(data.age, buildingId)
-	if not building then
-		return false
-	end
-
-	local owned = data.buildings[buildingId] or 0
-	local cost = EconomySystem.getBuildingCost(building, owned)
-	if data.ore < cost then
-		return false
-	end
-
-	data.ore -= cost
-	data.buildings[buildingId] = owned + 1
-	EconomySystem.pushState(player, data)
-	return true
-end
-
 function EconomySystem.init()
-	-- Idle production tick
+	-- Passive Ore tick
 	task.spawn(function()
 		while true do
 			task.wait(IDLE_TICK_SECONDS)
@@ -137,17 +132,6 @@ function EconomySystem.init()
 				DataManager.savePlayerData(player)
 			end
 		end
-	end)
-
-	NetworkEvents.get("RequestBuyBuilding").OnServerEvent:Connect(function(player, buildingId)
-		if type(buildingId) ~= "string" then
-			return
-		end
-		local data = DataManager.getData(player)
-		if not data then
-			return
-		end
-		EconomySystem.buyBuilding(player, data, buildingId)
 	end)
 end
 

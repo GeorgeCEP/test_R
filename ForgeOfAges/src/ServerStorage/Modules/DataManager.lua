@@ -7,13 +7,11 @@ local playerDataStore = DataStoreService:GetDataStore("ForgeOfAges_PlayerData_v1
 local loadedData: { [number]: any } = {}
 
 local DEFAULT_DATA = {
-	_version = 1,
+	_version = 2,
 
-	-- Economy / age progression
+	-- Economy
 	ore = 0,
-	age = 1,
-	buildings = {},
-	techPoints = 0,
+	prestigePoints = 0, -- permanent +2%/point global Ore & stage-damage multiplier, earned from Prestige
 	prestigeCount = 0,
 	totalOreEarned = 0,
 
@@ -26,8 +24,21 @@ local DEFAULT_DATA = {
 	skills = {},
 	equippedSkillIds = {},
 
-	-- Dungeon / arena
-	dungeonCooldownEnd = 0,
+	-- Tech tree (replaces the old buildings-for-passive-income loop)
+	researchPoints = 0,
+	techTree = {},
+
+	-- Stage crawl progress. Age/theme is derived from chapter, not stored
+	-- separately, so there's one source of truth for "how far has this
+	-- player gotten". cycle counts Endless Cycle loops once capped out.
+	stageProgress = { chapter = 1, stage = 1, cycle = 0 },
+
+	-- Forge crafting queue - persisted so an in-flight craft survives relog.
+	-- Each entry: { finishAt: number (os.time), ageId: number }. Position in
+	-- the array is the display slot number.
+	forgeJobs = {},
+
+	-- Arena
 	arena = { rollsToday = 0, lastResetDay = 0 },
 }
 

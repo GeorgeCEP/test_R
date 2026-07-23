@@ -1,12 +1,14 @@
 -- ServerStorage/Modules/PowerCalculator.lua
 -- Resolves a player's authoritative save data (equipped gear + pets + skills)
--- into a CombatStats sheet and a single Power scalar, used by DungeonSystem
--- and ArenaSystem for stat-check resolution.
+-- into a CombatStats sheet, plus either a single Power scalar (ArenaSystem's
+-- instant stat-check) or a real-time dps/maxHP combatant (StageSystem's
+-- tick-based stage combat).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CombatStats = require(ReplicatedStorage.Modules.CombatStats)
 local PetDefinitions = require(ReplicatedStorage.Modules.PetDefinitions)
 local SkillDefinitions = require(ReplicatedStorage.Modules.SkillDefinitions)
+local TechTreeSystem = require(script.Parent.TechTreeSystem)
 
 local PowerCalculator = {}
 
@@ -56,6 +58,17 @@ end
 
 function PowerCalculator.getPower(data): number
 	return CombatStats.computePower(PowerCalculator.getStats(data))
+end
+
+-- Real-time stage combat numbers (dps/maxHP/regenPerSecond), folding in tech
+-- tree damage/HP bonuses on top of the gear/pet/skill stat sheet.
+function PowerCalculator.getCombatant(data)
+	local stats = PowerCalculator.getStats(data)
+	local techBonus = {
+		damagePercent = TechTreeSystem.getBonus(data, "damagePercent"),
+		maxHPPercent = TechTreeSystem.getBonus(data, "maxHPPercent"),
+	}
+	return CombatStats.computeCombatant(stats, techBonus)
 end
 
 return PowerCalculator

@@ -8,18 +8,19 @@ local RunService = game:GetService("RunService")
 
 local REMOTE_NAMES = {
 	"StateUpdated",
-	"RequestBuyBuilding",
-	"RequestAgeUp",
 	"RequestPrestige",
 	"RequestEquipGear",
 	"RequestUnequipGear",
 	"RequestEquipCollectible",
 	"RequestGachaRoll",
 	"GachaResult",
-	"RequestEnterDungeon",
-	"DungeonResult",
 	"RequestArenaBattle",
 	"ArenaResult",
+	"RequestForgeCraft",
+	"ForgeResult",
+	"RequestTechUpgrade",
+	"CombatTick",
+	"StageEvent",
 }
 
 local NetworkEvents = {}

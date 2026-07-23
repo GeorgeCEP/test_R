@@ -1,5 +1,6 @@
 -- ServerStorage/Modules/GearSystem.lua
--- Rolls gear drops (called by DungeonSystem) and handles equip/unequip.
+-- Rolls gear drops (called by ForgeSystem when a craft job finishes) and
+-- handles equip/unequip.
 -- Gear slot is inherent to the item, so equipping just needs the item id -
 -- the server looks up which slot it belongs to and swaps whatever was there.
 
