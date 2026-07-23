@@ -1,0 +1,8 @@
+# Rojo / Roblox build artifacts
+*.rbxl
+*.rbxlx
+sourcemap.json
+
+# OS junk
+Thumbs.db
+.DS_Store

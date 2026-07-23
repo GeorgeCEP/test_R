@@ -1,0 +1,18 @@
+{
+  "name": "ForgeOfAges",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Modules": { "$path": "src/ReplicatedStorage/Modules" }
+    },
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+    "ServerStorage": {
+      "Modules": { "$path": "src/ServerStorage/Modules" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": { "$path": "src/StarterPlayer/StarterPlayerScripts" }
+    }
+  }
+}
