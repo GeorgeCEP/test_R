@@ -7,10 +7,15 @@ local playerDataStore = DataStoreService:GetDataStore("ForgeOfAges_PlayerData_v1
 local loadedData: { [number]: any } = {}
 
 local DEFAULT_DATA = {
-	_version = 2,
+	_version = 3,
 
-	-- Economy
+	-- Economy. Ore no longer comes from stage clears (see StageSystem) - its
+	-- only sources are the hourly claim (lastOreClaimAt) and Dungeon runs,
+	-- plus the passive Tech Tree trickle. Coins come from selling gear and
+	-- only ever spend on Forge Level.
 	ore = 0,
+	coins = 0,
+	lastOreClaimAt = 0,
 	prestigePoints = 0, -- permanent +2%/point global Ore & stage-damage multiplier, earned from Prestige
 	prestigeCount = 0,
 	totalOreEarned = 0,
@@ -19,10 +24,17 @@ local DEFAULT_DATA = {
 	gachaCurrency = 0,
 	gear = {},
 	equippedGear = {},
+	-- Pets are hatched from eggs, not gacha-rolled - each entry is instance
+	-- state ({defId, level, equipped}), not just an owned definition id.
+	-- Duplicates level up the existing entry instead of adding a new one.
 	pets = {},
-	equippedPetIds = {},
+	eggs = {}, -- { { id, rarity } } - dungeon "egg" reward inventory
 	skills = {},
 	equippedSkillIds = {},
+
+	-- Applied via a gear item's substats list (see GearSystem) - this is the
+	-- unattached inventory of enchantments waiting to be applied to an item.
+	enchantments = {}, -- { { id, statBonus, rarity } }
 
 	-- Tech tree (replaces the old buildings-for-passive-income loop)
 	researchPoints = 0,
@@ -33,13 +45,23 @@ local DEFAULT_DATA = {
 	-- player gotten". cycle counts Endless Cycle loops once capped out.
 	stageProgress = { chapter = 1, stage = 1, cycle = 0 },
 
-	-- Forge crafting queue - persisted so an in-flight craft survives relog.
-	-- Each entry: { finishAt: number (os.time), ageId: number }. Position in
-	-- the array is the display slot number.
-	forgeJobs = {},
+	-- Forge: instant, multi-slot crafting (no timed queue). Level is bought
+	-- with Coins and shifts the rarity-roll weights toward higher tiers;
+	-- slot count still comes from the Tech Tree (see TechTreeSystem).
+	forgeLevel = 1,
 
 	-- Arena
-	arena = { rollsToday = 0, lastResetDay = 0 },
+	arena = { rollsToday = 0, lastResetDay = 0, rating = 1000 },
+
+	-- Dungeon: separate stage ladder per dungeon type (see DungeonDefinitions).
+	-- selectedStage is a cursor the player can move back and forth across
+	-- anything up to highestStage + 1; highestStage only ever increases.
+	dungeonProgress = {
+		OreVault = { highestStage = 0, selectedStage = 1 },
+		BeastDen = { highestStage = 0, selectedStage = 1 },
+		RuneChamber = { highestStage = 0, selectedStage = 1 },
+	},
+	dungeonCooldowns = {},
 }
 
 local function deepCopy(t)

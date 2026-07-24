@@ -1,10 +1,10 @@
 -- ServerStorage/Modules/GachaSystem.lua
--- Handles rolling pets and skills using gachaCurrency. The pool is filtered
--- to entries whose ageId is <= the player's current age, so new pets/skills
--- unlock progressively as the player advances through the ages.
+-- Skill rolls only now - Pets are hatched from Dungeon egg rewards instead
+-- (see PetSystem), not gacha-rolled. The pool is filtered to entries whose
+-- ageId is <= the player's current age, so new skills unlock progressively
+-- as the player advances through the ages.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local PetDefinitions = require(ReplicatedStorage.Modules.PetDefinitions)
 local SkillDefinitions = require(ReplicatedStorage.Modules.SkillDefinitions)
 local GearDefinitions = require(ReplicatedStorage.Modules.GearDefinitions)
 local NetworkEvents = require(ReplicatedStorage.Modules.NetworkEvents)
@@ -53,16 +53,13 @@ local function pickPool(pool, maxAge: number, rarityId: string)
 	return candidates[math.random(1, #candidates)]
 end
 
-function GachaSystem.roll(player: Player, data, poolType: string)
+function GachaSystem.roll(player: Player, data)
 	if data.gachaCurrency < ROLL_COST then
 		return nil
 	end
 
-	local pool = if poolType == "Pet" then PetDefinitions.Pets else SkillDefinitions.Skills
-	local ownedList = if poolType == "Pet" then data.pets else data.skills
-
 	local rarityId = rollRarity()
-	local entry = pickPool(pool, EconomySystem.getAgeId(data), rarityId)
+	local entry = pickPool(SkillDefinitions.Skills, EconomySystem.getAgeId(data), rarityId)
 	if not entry then
 		return nil
 	end
@@ -70,7 +67,7 @@ function GachaSystem.roll(player: Player, data, poolType: string)
 	data.gachaCurrency -= ROLL_COST
 
 	local alreadyOwned = false
-	for _, ownedId in ownedList do
+	for _, ownedId in data.skills do
 		if ownedId == entry.id then
 			alreadyOwned = true
 			break
@@ -80,26 +77,23 @@ function GachaSystem.roll(player: Player, data, poolType: string)
 	if alreadyOwned then
 		data.gachaCurrency += DUPLICATE_REFUND
 	else
-		table.insert(ownedList, entry.id)
+		table.insert(data.skills, entry.id)
 	end
 
 	EconomySystem.pushState(player, data)
-	return { poolType = poolType, resultId = entry.id, name = entry.name, rarity = entry.rarity, duplicate = alreadyOwned }
+	return { poolType = "Skill", resultId = entry.id, name = entry.name, rarity = entry.rarity, duplicate = alreadyOwned }
 end
 
 function GachaSystem.init()
 	local gachaResult = NetworkEvents.get("GachaResult")
 
-	NetworkEvents.get("RequestGachaRoll").OnServerEvent:Connect(function(player, poolType)
-		if poolType ~= "Pet" and poolType ~= "Skill" then
-			return
-		end
+	NetworkEvents.get("RequestGachaRoll").OnServerEvent:Connect(function(player)
 		local data = DataManager.getData(player)
 		if not data then
 			return
 		end
 
-		local result = GachaSystem.roll(player, data, poolType)
+		local result = GachaSystem.roll(player, data)
 		if result then
 			gachaResult:FireClient(player, result)
 		end

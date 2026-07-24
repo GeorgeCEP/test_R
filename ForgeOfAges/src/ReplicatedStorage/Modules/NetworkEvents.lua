@@ -16,11 +16,23 @@ local REMOTE_NAMES = {
 	"GachaResult",
 	"RequestArenaBattle",
 	"ArenaResult",
+	"ArenaSceneEvent",
 	"RequestForgeCraft",
 	"ForgeResult",
 	"RequestTechUpgrade",
 	"CombatTick",
 	"StageEvent",
+	"RequestSelectDungeonStage",
+	"RequestEnterDungeon",
+	"DungeonSceneEvent",
+	"DungeonRunResult",
+	"RequestClaimHourlyOre",
+	"RequestSellGear",
+	"RequestUpgradeForge",
+	"RequestHatchEgg",
+	"HatchResult",
+	"RequestSetPetEquipped",
+	"RequestApplyEnchantment",
 }
 
 local NetworkEvents = {}

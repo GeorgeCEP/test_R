@@ -10,6 +10,15 @@
 -- stuck - they get "downed" (a short timeout) and recover instead of
 -- failing outright. This sidesteps the exact bug the README flagged in the
 -- old dungeon model (a zero-Power player stuck at a 5% floor indefinitely).
+--
+-- Each enemy in a wave has its own HP now (not a shared pool): the wave's
+-- total HP is split across `enemyCount` enemies with a little variance, and
+-- only the front-most one (index 1) is ever being damaged at a time - when
+-- it dies it's removed permanently and the next one becomes the target.
+-- Incoming damage to the player stays the wave's flat `waveDPS` scalar
+-- (that's a "how hard is this wave overall" number, not per-enemy), it just
+-- gets attributed to whichever enemy is still standing after the player's
+-- hit for animation purposes.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -28,12 +37,15 @@ local StageSystem = {}
 local COMBAT_TICK = 1 -- seconds
 local DOWN_RECOVERY_SECONDS = 3
 local ADVANCE_WALK_SECONDS = 1.2
+local ENEMY_HP_VARIANCE = 0.15 -- +/- 15% per enemy, just for visual texture
+
+type EnemyState = { hp: number, maxHp: number }
 
 -- Runtime-only combat state, keyed by UserId - not persisted. Rebuilt fresh
 -- (full HP, wave respawned) on join, same spirit as ForgeSystem's tap-cooldown table.
 type RunState = {
 	wave: any?, -- current StageDefinitions stage info, nil while "advancing"
-	waveRemainingHP: number,
+	enemies: { EnemyState }, -- enemies[1] is always the current target
 	stageHP: number,
 	stageMaxHP: number,
 	downedUntil: number?,
@@ -54,12 +66,23 @@ local function applyLaneTheme(player: Player, data, runState: RunState)
 	end
 end
 
+local function buildEnemies(info): { EnemyState }
+	local enemies = {}
+	local baseShare = info.waveMaxHP / info.enemyCount
+	for _ = 1, info.enemyCount do
+		local variance = (1 - ENEMY_HP_VARIANCE) + math.random() * (ENEMY_HP_VARIANCE * 2)
+		local maxHp = baseShare * variance
+		table.insert(enemies, { hp = maxHp, maxHp = maxHp })
+	end
+	return enemies
+end
+
 local function startWave(player: Player, data, runState: RunState)
 	local progress = data.stageProgress
 	local info = StageDefinitions.getStageInfo(progress.chapter, progress.stage, progress.cycle)
 
 	runState.wave = info
-	runState.waveRemainingHP = info.waveMaxHP
+	runState.enemies = buildEnemies(info)
 	runState.advancing = false
 
 	applyLaneTheme(player, data, runState)
@@ -85,23 +108,21 @@ local function advanceProgress(data)
 	end
 end
 
-local function grantClearRewards(player: Player, data, info)
-	local oreMultiplier = (1 + TechTreeSystem.getBonus(data, "stageOrePercent") / 100) * EconomySystem.getGlobalOreMultiplier(data)
+-- Stage clears no longer grant Ore (see StageDefinitions/EconomySystem) -
+-- only Research Points and a trickle of Gacha Currency.
+local function grantClearRewards(data, info)
 	local researchMultiplier = 1 + TechTreeSystem.getBonus(data, "researchPercent") / 100
-
-	local oreGain = info.oreReward * oreMultiplier
 	local researchGain = info.researchReward * researchMultiplier
 
-	EconomySystem.addOre(data, oreGain)
 	data.researchPoints += researchGain
 	data.gachaCurrency += info.gachaReward
 
-	return oreGain, researchGain
+	return researchGain
 end
 
 local function onWaveCleared(player: Player, data, runState: RunState)
 	local info = runState.wave
-	local oreGain, researchGain = grantClearRewards(player, data, info)
+	local researchGain = grantClearRewards(data, info)
 
 	runState.advancing = true
 	runState.wave = nil
@@ -119,7 +140,6 @@ local function onWaveCleared(player: Player, data, runState: RunState)
 	stageEvent:FireClient(player, {
 		kind = "WaveCleared",
 		label = info.label,
-		oreGain = oreGain,
 		researchGain = researchGain,
 		gachaGain = info.gachaReward,
 		advanceKind = advanceKind,
@@ -156,8 +176,33 @@ local function tickPlayer(player: Player, data, runState: RunState)
 	local combatant = PowerCalculator.getCombatant(data)
 	runState.stageMaxHP = combatant.maxHP
 
-	runState.waveRemainingHP = math.max(0, runState.waveRemainingHP - combatant.dps * COMBAT_TICK)
-	runState.stageHP = math.min(runState.stageMaxHP, runState.stageHP - runState.wave.waveDPS * COMBAT_TICK + combatant.regenPerSecond * COMBAT_TICK)
+	-- Player hits the front-most alive enemy.
+	local front = runState.enemies[1]
+	if front then
+		local damage = combatant.dps * COMBAT_TICK
+		front.hp = math.max(0, front.hp - damage)
+
+		LaneSystem.playerLunge(player)
+		LaneSystem.popEnemyDamage(player, 1, damage)
+		LaneSystem.setEnemyHPFraction(player, 1, front.hp / front.maxHp)
+
+		if front.hp <= 0 then
+			LaneSystem.killEnemy(player, 1)
+			table.remove(runState.enemies, 1)
+		else
+			LaneSystem.enemyLunge(player, 1)
+		end
+	end
+
+	-- Incoming damage: the wave's flat DPS, same as the old shared-pool
+	-- version - attributed to "whichever enemy is still standing" above,
+	-- not modeled per-enemy, since it represents the wave's overall threat.
+	runState.stageHP =
+		math.min(runState.stageMaxHP, runState.stageHP - runState.wave.waveDPS * COMBAT_TICK + combatant.regenPerSecond * COMBAT_TICK)
+
+	if #runState.enemies > 0 then
+		LaneSystem.popPlayerDamage(player, runState.wave.waveDPS * COMBAT_TICK)
+	end
 
 	if runState.stageHP <= 0 then
 		runState.stageHP = 0
@@ -166,19 +211,21 @@ local function tickPlayer(player: Player, data, runState: RunState)
 	end
 
 	LaneSystem.setPlayerHPBar(player, runState.stageHP / runState.stageMaxHP, runState.downedUntil ~= nil)
-	LaneSystem.setWaveHPFraction(player, runState.waveRemainingHP / runState.wave.waveMaxHP)
 
+	local frontAfter = runState.enemies[1]
 	combatTick:FireClient(player, {
 		label = runState.wave.label,
 		zoneName = runState.wave.zoneName,
-		enemyHP = runState.waveRemainingHP,
-		enemyMaxHP = runState.wave.waveMaxHP,
+		enemyHP = if frontAfter then frontAfter.hp else 0,
+		enemyMaxHP = if frontAfter then frontAfter.maxHp else 1,
+		enemiesLeft = #runState.enemies,
+		totalEnemies = runState.wave.enemyCount,
 		playerHP = runState.stageHP,
 		playerMaxHP = runState.stageMaxHP,
 		downed = runState.downedUntil ~= nil,
 	})
 
-	if runState.waveRemainingHP <= 0 then
+	if #runState.enemies == 0 then
 		onWaveCleared(player, data, runState)
 	end
 end
@@ -187,7 +234,7 @@ local function initRunState(player: Player, data): RunState
 	local combatant = PowerCalculator.getCombatant(data)
 	local runState: RunState = {
 		wave = nil,
-		waveRemainingHP = 0,
+		enemies = {},
 		stageHP = combatant.maxHP,
 		stageMaxHP = combatant.maxHP,
 		downedUntil = nil,

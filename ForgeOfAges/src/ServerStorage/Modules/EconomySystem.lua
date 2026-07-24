@@ -1,15 +1,17 @@
 -- ServerStorage/Modules/EconomySystem.lua
--- Ore's only passive source now is the base per-age trickle plus tech tree
--- levels (buildings are gone) - everything else (stage clears, the Forge)
--- is a discrete grant/spend handled by the systems that own those actions.
--- This module still owns the shared pushState broadcast every other system
--- calls after it mutates player data.
+-- Ore comes from three places now: the base per-age passive trickle (+ Tech
+-- Tree levels), the hourly claim below, and Dungeon runs (DungeonSystem) -
+-- stage clears no longer grant Ore at all (see StageDefinitions). Coins are
+-- a separate currency from selling gear (GearSystem.sell), spent only on
+-- Forge Level. This module still owns the shared pushState broadcast every
+-- other system calls after it mutates player data.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 local AgeDefinitions = require(ReplicatedStorage.Modules.AgeDefinitions)
 local StageDefinitions = require(ReplicatedStorage.Modules.StageDefinitions)
+local DungeonDefinitions = require(ReplicatedStorage.Modules.DungeonDefinitions)
 local NetworkEvents = require(ReplicatedStorage.Modules.NetworkEvents)
 local DataManager = require(script.Parent.DataManager)
 local PowerCalculator = require(script.Parent.PowerCalculator)
@@ -22,6 +24,8 @@ local AUTOSAVE_SECONDS = 60
 local PRESTIGE_MULTIPLIER_STEP = 0.02 -- +2% global Ore output per Prestige Point
 local ARENA_DAILY_ATTEMPTS = 3
 local BASE_PASSIVE_ORE = 0.2 -- flat, before age scale/tech bonuses/prestige multiplier
+local ORE_CLAIM_INTERVAL_SECONDS = 3600
+local BASE_ORE_CLAIM = 50 -- flat, before age scale/prestige multiplier - a meaningful chunk vs. the passive trickle
 
 local stateUpdated = NetworkEvents.get("StateUpdated")
 
@@ -45,6 +49,25 @@ function EconomySystem.addOre(data, amount: number)
 	data.totalOreEarned += amount
 end
 
+function EconomySystem.getOreClaimAmount(data): number
+	local ageId = EconomySystem.getAgeId(data)
+	return BASE_ORE_CLAIM * AgeDefinitions.getScale(ageId) * EconomySystem.getGlobalOreMultiplier(data)
+end
+
+function EconomySystem.getSecondsUntilClaim(data): number
+	return math.max(0, data.lastOreClaimAt + ORE_CLAIM_INTERVAL_SECONDS - os.time())
+end
+
+function EconomySystem.tryClaimHourlyOre(player: Player, data): boolean
+	if EconomySystem.getSecondsUntilClaim(data) > 0 then
+		return false
+	end
+	data.lastOreClaimAt = os.time()
+	EconomySystem.addOre(data, EconomySystem.getOreClaimAmount(data))
+	EconomySystem.pushState(player, data)
+	return true
+end
+
 function EconomySystem.pushState(player: Player, data)
 	local ageId = EconomySystem.getAgeId(data)
 	local age = AgeDefinitions.get(ageId)
@@ -62,20 +85,35 @@ function EconomySystem.pushState(player: Player, data)
 		techTreeLevels[nodeId] = level
 	end
 
-	local forgeJobs = {}
-	for index, job in data.forgeJobs do
-		table.insert(forgeJobs, {
-			slot = index,
-			secondsLeft = math.max(0, job.finishAt - os.time()),
-		})
+	-- Lazy require: ForgeSystem requires EconomySystem (for getAgeId/pushState),
+	-- so this can't be a top-level require without creating a cycle - same
+	-- pattern TechTreeSystem.purchase already uses for the same reason.
+	local ForgeSystem = require(script.Parent.ForgeSystem)
+
+	local dungeonProgress = {}
+	local dungeonCooldowns = {}
+	local now = os.time()
+	for _, dungeonId in DungeonDefinitions.Order do
+		local entry = data.dungeonProgress and data.dungeonProgress[dungeonId]
+		dungeonProgress[dungeonId] = {
+			highestStage = if entry then entry.highestStage else 0,
+			selectedStage = if entry then entry.selectedStage else 1,
+		}
+		local lastEntered = data.dungeonCooldowns and data.dungeonCooldowns[dungeonId]
+		dungeonCooldowns[dungeonId] = if lastEntered
+			then math.max(0, DungeonDefinitions.COOLDOWN_SECONDS - (now - lastEntered))
+			else 0
 	end
 
 	stateUpdated:FireClient(player, {
 		ore = data.ore,
+		coins = data.coins,
 		ageId = ageId,
 		ageName = age.name,
 		resourceLabel = age.resourceLabel,
 		idlePerSecond = EconomySystem.getIdleOutputPerSecond(data),
+		secondsUntilClaim = EconomySystem.getSecondsUntilClaim(data),
+		oreClaimAmount = EconomySystem.getOreClaimAmount(data),
 
 		stageChapter = data.stageProgress.chapter,
 		stageStage = data.stageProgress.stage,
@@ -93,20 +131,34 @@ function EconomySystem.pushState(player: Player, data)
 		gear = data.gear,
 		equippedGear = data.equippedGear,
 		pets = data.pets,
-		equippedPetIds = data.equippedPetIds,
+		eggs = data.eggs,
+		enchantments = data.enchantments,
 		skills = data.skills,
 		equippedSkillIds = data.equippedSkillIds,
 
 		researchPoints = data.researchPoints,
 		techTree = techTreeLevels,
 		forgeSlotCount = TechTreeSystem.getForgeSlotCount(data),
-		forgeJobs = forgeJobs,
+		forgeLevel = data.forgeLevel,
+		forgeCraftCost = ForgeSystem.getCraftCost(data),
+		forgeUpgradeCost = ForgeSystem.getUpgradeCost(data),
 
 		arenaAttemptsLeft = arenaAttemptsLeft,
+		arenaRating = data.arena.rating or 1000,
+
+		dungeonProgress = dungeonProgress,
+		dungeonCooldownsRemaining = dungeonCooldowns,
 	})
 end
 
 function EconomySystem.init()
+	NetworkEvents.get("RequestClaimHourlyOre").OnServerEvent:Connect(function(player)
+		local data = DataManager.getData(player)
+		if data then
+			EconomySystem.tryClaimHourlyOre(player, data)
+		end
+	end)
+
 	-- Passive Ore tick
 	task.spawn(function()
 		while true do

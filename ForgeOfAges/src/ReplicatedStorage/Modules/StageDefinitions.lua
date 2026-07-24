@@ -58,7 +58,6 @@ StageDefinitions.CHAPTER_FLAVOR = {
 
 local HP_FACTOR = 6 -- total wave HP as a multiple of "difficulty power"
 local DPS_FACTOR = 0.4 -- total incoming wave DPS as a multiple of "difficulty power"
-local ORE_REWARD_FACTOR = 0.02
 
 -- Enemy count per wave ramps slowly, capped so the numeric-tick sim (and the
 -- handful of dummy models LaneSystem spawns) stay cheap.
@@ -87,7 +86,10 @@ function StageDefinitions.getDifficultyPower(chapter: number, stage: number, cyc
 end
 
 -- Everything needed to run/display one wave: total wave HP/DPS, enemy count,
--- and the ore/research/gacha rewards for clearing it.
+-- and the research/gacha rewards for clearing it. No Ore here anymore - Ore
+-- only comes from the hourly claim and Dungeon runs (see EconomySystem /
+-- DungeonSystem); stage clears pay in Research Points and a trickle of
+-- Gacha Currency instead.
 function StageDefinitions.getStageInfo(chapter: number, stage: number, cycle: number)
 	local difficultyPower = StageDefinitions.getDifficultyPower(chapter, stage, cycle)
 	local flavor = StageDefinitions.getFlavor(chapter)
@@ -104,7 +106,6 @@ function StageDefinitions.getStageInfo(chapter: number, stage: number, cycle: nu
 		enemyCount = count,
 		waveMaxHP = difficultyPower * HP_FACTOR,
 		waveDPS = difficultyPower * DPS_FACTOR,
-		oreReward = difficultyPower * ORE_REWARD_FACTOR,
 		researchReward = chapter + math.floor((stage - 1) / 5),
 		gachaReward = 5 + chapter * 2,
 	}

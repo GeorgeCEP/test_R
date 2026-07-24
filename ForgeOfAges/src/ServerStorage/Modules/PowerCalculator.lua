@@ -35,11 +35,19 @@ function PowerCalculator.getStats(data)
 		end
 	end
 
-	for _, petId in data.equippedPetIds do
-		if petId then
-			local def = findDef(PetDefinitions.Pets, petId)
+	-- Pet bonuses scale with level now (duplicates level up the pet instead
+	-- of granting a second copy, see PetSystem) - +10%/level, same curve the
+	-- mockup used, capped at PetSystem.MAX_PET_LEVEL.
+	for _, pet in data.pets do
+		if pet.equipped then
+			local def = findDef(PetDefinitions.Pets, pet.defId)
 			if def then
-				CombatStats.addFlatBonuses(stats, def.bonuses)
+				local levelScale = 1 + 0.1 * (pet.level - 1)
+				local scaledBonuses = {}
+				for stat, value in def.bonuses do
+					scaledBonuses[stat] = value * levelScale
+				end
+				CombatStats.addFlatBonuses(stats, scaledBonuses)
 			end
 		end
 	end

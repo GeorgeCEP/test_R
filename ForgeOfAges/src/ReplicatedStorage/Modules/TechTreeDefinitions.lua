@@ -4,6 +4,19 @@
 -- Effects are keyed percentages/flags that TechTreeSystem.getBonus aggregates
 -- and EconomySystem/CombatStats/ForgeSystem read - add a node by appending an
 -- entry, no other module needs to change.
+--
+-- Full dependency graph (root at top):
+--   damage
+--   |-- vitality
+--   |     |-- research_gain
+--   |-- passive_ore
+--         |-- stage_ore
+--         |-- forge_speed
+--               |-- forge_slot_2
+--                     |-- forge_slot_3
+--                           |-- forge_overclock (capstone, one-time: a 4th
+--                                                Forge slot on top of the
+--                                                Tech Tree's own 2nd/3rd)
 
 export type TechNodeDef = {
 	id: string,
@@ -39,6 +52,7 @@ local nodes: { TechNodeDef } = {
 		costGrowth = 1.35,
 		effectKey = "maxHPPercent",
 		effectPerLevel = 6,
+		prerequisite = "damage",
 	},
 	{
 		id = "passive_ore",
@@ -49,6 +63,7 @@ local nodes: { TechNodeDef } = {
 		costGrowth = 1.3,
 		effectKey = "passiveOrePercent",
 		effectPerLevel = 8,
+		prerequisite = "damage",
 	},
 	{
 		id = "stage_ore",
@@ -59,6 +74,7 @@ local nodes: { TechNodeDef } = {
 		costGrowth = 1.3,
 		effectKey = "stageOrePercent",
 		effectPerLevel = 8,
+		prerequisite = "passive_ore",
 	},
 	{
 		id = "research_gain",
@@ -69,16 +85,18 @@ local nodes: { TechNodeDef } = {
 		costGrowth = 1.4,
 		effectKey = "researchPercent",
 		effectPerLevel = 10,
+		prerequisite = "vitality",
 	},
 	{
 		id = "forge_speed",
 		name = "Efficient Tongs",
-		description = "-6% forge craft time per level",
+		description = "-6% Forge craft cost per level",
 		maxLevel = 10,
 		baseCost = 6,
 		costGrowth = 1.35,
-		effectKey = "forgeSpeedPercent",
+		effectKey = "forgeCostDiscountPercent",
 		effectPerLevel = 6,
+		prerequisite = "passive_ore",
 	},
 	{
 		id = "forge_slot_2",
@@ -89,6 +107,7 @@ local nodes: { TechNodeDef } = {
 		costGrowth = 1,
 		effectKey = "forgeSlot",
 		effectPerLevel = 1,
+		prerequisite = "forge_speed",
 	},
 	{
 		id = "forge_slot_3",
@@ -100,6 +119,17 @@ local nodes: { TechNodeDef } = {
 		effectKey = "forgeSlot",
 		effectPerLevel = 1,
 		prerequisite = "forge_slot_2",
+	},
+	{
+		id = "forge_overclock",
+		name = "Forge Overclock",
+		description = "Capstone: unlocks a fourth forge slot",
+		maxLevel = 1,
+		baseCost = 2000,
+		costGrowth = 1,
+		effectKey = "forgeSlot",
+		effectPerLevel = 1,
+		prerequisite = "forge_slot_3",
 	},
 }
 
@@ -117,6 +147,19 @@ end
 -- Cost to buy the *next* level, given the level currently owned (0 = unowned).
 function TechTreeDefinitions.getCost(node: TechNodeDef, currentLevel: number): number
 	return math.floor(node.baseCost * (node.costGrowth ^ currentLevel))
+end
+
+-- How many prerequisite hops from the root - used purely to indent the tree
+-- UI (see README §2.6: indentation-only is the first-pass rendering, no
+-- connector lines yet).
+function TechTreeDefinitions.getDepth(nodeId: string): number
+	local depth = 0
+	local node = TechTreeDefinitions.get(nodeId)
+	while node and node.prerequisite do
+		depth += 1
+		node = TechTreeDefinitions.get(node.prerequisite)
+	end
+	return depth
 end
 
 return TechTreeDefinitions

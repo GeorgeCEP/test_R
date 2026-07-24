@@ -7,6 +7,100 @@ section explicitly says "already in the codebase." Treat this as the thing
 to work from once Roblox Studio is installed - not as a changelog of what
 exists.
 
+## 0. Status — the full redesign below is now implemented
+
+Two later sessions (still without Studio access) implemented essentially
+everything §2-§3 describe. **This document is now closer to a changelog
+than a backlog** - the few remaining gaps are called out explicitly at the
+end of this section. Nothing here has ever been run in Studio, so treat
+"implemented" as "written and syntax-checked" (see the verification note
+below), not "playtested."
+
+**Roblox assets vs. Studio, answered concretely**: writing the *code* that
+consumes a marketplace asset (`InsertService:LoadAsset(assetId)` +
+`Humanoid:AddAccessory`) needs nothing but a text editor - that's just a
+number and two API calls. What genuinely requires Studio is *finding which
+asset IDs to use and confirming they work*: there's no script API to browse
+the catalog, so picking "a rustic pauldron for Common Armor" is done by eye
+in Studio's Avatar Editor, and whether an accessory looks right on an R15
+rig can only be seen by running the game. `GearVisuals.lua` +
+`MarketplaceAssets.lua` (§2.5) are built and wired into `GearSystem.equip`/
+`unequip`/`sell`, but `MarketplaceAssets.lua` ships with **empty asset-ID
+tables on purpose** - that curation step is the one piece of this whole doc
+that can't be done from here.
+
+**Verification note**: there is no Roblox/Luau runtime in this environment,
+so nothing could be executed. What *was* done: every `.lua` file in the
+project was fed through a real Luau compiler (via the `luau-web` npm
+package, run once from a scratch Node script - not a project dependency) and
+confirmed to compile with zero syntax errors, including the ~1900-line
+`UIManager.lua`. That rules out typos/mismatched blocks/invalid syntax; it
+does **not** rule out logic bugs, wrong Roblox API usage, or bad numbers -
+only an actual Studio session can catch those.
+
+**Everything implemented across §2-§3**:
+- **Per-enemy HP + attack animations** (§2.1) - `StageSystem` tracks an
+  array of `{hp, maxHp}` per enemy instead of one shared pool; the front-most
+  alive one takes damage and is permanently removed on death.
+  `LaneSystem` gained `setEnemyHPFraction`/`killEnemy`/`enemyLunge`/
+  `playerLunge`/`popEnemyDamage`/`popPlayerDamage` - the lunges are
+  `TweenService` position tweens of the existing anchored Parts/
+  `HumanoidRootPart`, not real Roblox Animations, exactly as this section
+  originally specced. Stage clears now grant Research Points + a Gacha
+  Currency trickle only - no more Ore (see next point).
+- **Hourly Ore claim + Dungeon** (§2.2) - `EconomySystem.tryClaimHourlyOre`
+  (`lastOreClaimAt` gating, `secondsUntilClaim` pushed to the client) and the
+  Dungeon system (stage ladder, live wave runs, cooldown) both existed from
+  the prior session; Dungeon rewards now resolve to the **real Egg/Ore/
+  Enchantment split** this section always wanted, not the currency
+  substitution an earlier pass used as a placeholder.
+- **Forge: instant, multi-slot, Forge Level** (§2.3) - `ForgeSystem.craft`
+  pays `baseCost × slotCount` once and returns `slotCount` items immediately;
+  the timed job queue and `forgeJobs` are gone entirely. `forgeLevel` (Coins-
+  funded, `ForgeSystem.getUpgradeCost`/`tryUpgrade`) shifts `rollRarity`'s
+  weights toward higher tiers.
+- **Selling gear pays Coins** (§2.4) - `GearSystem.sell`, `sellValue`
+  computed once at roll time and stored on the item.
+- **Marketplace visuals** (§2.5) - mechanism is built (see the note above),
+  asset curation is not.
+- **Tech Tree prerequisite graph** (§2.6) - the full
+  `damage → vitality → research_gain` / `damage → passive_ore → {stage_ore,
+  forge_speed → forge_slot_2 → forge_slot_3 → forge_overclock}` tree from
+  this section's diagram is now real edges in `TechTreeDefinitions.lua`
+  (plus the `forge_overclock` capstone this section asked for), and the tab
+  renders each node indented by `TechTreeDefinitions.getDepth` - the
+  "indentation, no connector lines" first pass this section recommended.
+  ("Efficient Tongs" now discounts Forge craft *cost* rather than a craft
+  *time* that no longer exists post-instant-crafting.)
+- **Enchantments** (§2.7) - `data.enchantments` inventory,
+  `GearSystem.applyEnchantment` appends a `statBonus` onto an item's
+  existing `substats` list (reusing the same rendering/stat-sum code, as
+  intended) and is exposed from the gear-detail popup.
+- **Pets: hatched from eggs, duplicates level up** (§2.8) - `PetSystem.hatch`,
+  `data.pets` reshaped to `{defId, level, equipped}`, `equippedPetIds`
+  removed, `LoadoutSystem.setPetEquipped` swaps the old slot-index
+  bookkeeping for a plain count check (max 3), `PowerCalculator` scales pet
+  bonuses by `1 + 0.1 × (level - 1)`, and `GachaSystem` lost its `"Pet"`
+  branch (Skill-only now).
+- **Client UI: tabs + scenes + live Arena** (§3) - the tabbed HUD, gear/forge
+  popups, and Dungeon/Arena scene overlays from the prior session's pass are
+  still there; Arena is no longer instant-resolve-then-replay-a-log - it's a
+  **live matchmaking queue** (`ArenaSystem`) that pairs two real players if
+  one's already waiting, or falls back to a bot after a few seconds, then
+  ticks the fight in real time over `ArenaSceneEvent` the same way Dungeon
+  runs do. The HUD itself was also corrected to sit *over* the always-visible
+  3D lane/world (thin top strip + thin bottom dock) instead of a large opaque
+  panel, since Roblox - phone included - is played landscape, not as a
+  portrait mobile-app screen; Gear Inventory/Dungeon cards/Pets/Skills also
+  reflow into a multi-column grid on a PC-sized viewport and stay single-
+  column on a narrow one.
+
+**What's still actually missing**: real skill-based Arena matchmaking
+(pairing is FIFO, not rating-based - fine until there are enough concurrent
+players queuing for it to matter), and the marketplace asset IDs themselves.
+Every numeric balance value across every system remains an explicit
+placeholder, same caveat this document has had from the start.
+
 The previous README (git history has it) documented an earlier, simpler
 version of the redesign: auto-battle stage crawl, Ore-sink Forge, flat tech
 tree, gacha for both pets and skills. Several later decisions changed or

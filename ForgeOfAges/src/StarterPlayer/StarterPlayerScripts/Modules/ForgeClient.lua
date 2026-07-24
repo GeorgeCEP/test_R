@@ -19,6 +19,10 @@ function ForgeClient.init(UIManager, BackgroundSystem)
 		UIManager.showArenaResult(result)
 	end)
 
+	NetworkEvents.get("ArenaSceneEvent").OnClientEvent:Connect(function(event)
+		UIManager.onArenaSceneEvent(event)
+	end)
+
 	NetworkEvents.get("ForgeResult").OnClientEvent:Connect(function(result)
 		UIManager.showForgeResult(result)
 	end)
@@ -29,6 +33,18 @@ function ForgeClient.init(UIManager, BackgroundSystem)
 
 	NetworkEvents.get("StageEvent").OnClientEvent:Connect(function(event)
 		UIManager.showStageEvent(event)
+	end)
+
+	NetworkEvents.get("DungeonSceneEvent").OnClientEvent:Connect(function(event)
+		UIManager.onDungeonSceneEvent(event)
+	end)
+
+	NetworkEvents.get("DungeonRunResult").OnClientEvent:Connect(function(result)
+		UIManager.onDungeonRunResult(result)
+	end)
+
+	NetworkEvents.get("HatchResult").OnClientEvent:Connect(function(result)
+		UIManager.showHatchResult(result)
 	end)
 end
 
